@@ -1,4 +1,4 @@
-// fuzzy hash map,
+// fuzzy multi hash map,
 // - rlyeh, public domain
 
 // @todo: maybe use xf8 as a bloom filter. needed? map impl works rn, but see:
@@ -32,6 +32,7 @@ int strmatchi(const char *s, const char *wildcard) {
 
 
 
+
 #ifndef KEY
 #define KEY char*
 #endif
@@ -40,8 +41,8 @@ int strmatchi(const char *s, const char *wildcard) {
 #endif
 
 // convert a key into a bucket [0..N]
-#define NN 26
-#define KEYHASH(k) ((unsigned)toupper(0[k]) % NN)
+#define NN 28
+#define KEYHASH(k) (isalpha(0[k]) ? (unsigned)toupper(0[k]) % 26 : 26u + (0[k] == '#'))
 // utils
 #ifndef KEYCMP
 #define KEYCMP   strmatchi // !strcmp
@@ -100,11 +101,50 @@ struct map {
 
 #define map_empty(m)      (!map_count(m))
 #define map_insert(m,k,v) bucket_insert((m)->b + KEYHASH(k), k, v)
-#define map_find(m,k)     bucket_find((m)->b + KEYHASH(k), k)
+//#define map_find(m,k)     bucket_find((m)->b + KEYHASH(k), k)
 #define each_map(m,k,v) \
 	/*for*/(int N = 0; N < NN; ++N) \
 		for( struct bucket *b = (m)->b + N; b ; b = 0) \
 			 for each_bucket(b, k, v)
+
+VAL* map_find(struct map *m, const KEY k) {
+	int N = 0, M = NN - 1;
+	if( k[0] != '*' ) N = M = KEYHASH(k);
+	for( ; N <= M; ++N )
+	for( struct bucket *b = (m)->b + N; b ; b = 0) {
+		for( unsigned i = 0; i < b->count; ++i ) {
+			if( KEYCMP(b->keys[i], k) ) {
+				return b->vals + i;
+			}
+		}
+	}
+	return NULL;
+}
+
+VAL** map_multifind(struct map *m, const KEY k, int *count) { // result must be free() after use
+	VAL** ret = 0;
+	int cap = 0;
+
+	*count = 0;
+
+	int N = 0, M = NN - 1;
+	if( k[0] != '*' ) N = M = KEYHASH(k);
+	for( ; N <= M; ++N )
+	for( struct bucket *b = (m)->b + N; b ; b = 0) {
+		for( unsigned i = 0; i < b->count; ++i ) {
+			if( KEYCMP(b->keys[i], k) ) {
+				if( (*count) == cap ) {
+					ret = realloc(ret, sizeof(VAL*) * (cap = (*count * 1.5) + 1) );
+				}
+				ret[ (*count = *count + 1) - 1 ] = b->vals + i;
+			}
+		}
+	}
+
+	return ret;
+}
+
+
 
 int map_count(struct map *m) { unsigned c = 0; for(int N = 0; N < NN; ++N) c += (m)->b[N].count; return c; }
 

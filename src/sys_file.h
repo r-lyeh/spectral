@@ -44,23 +44,9 @@ int is_folder( const char *pathfile ) {
     struct stat st;
     return stat(pathfile, &st) >= 0 ? S_IFDIR == ( st.st_mode & S_IFMT ) : 0;
 }
-
-void db_set(const char *key, int value) {
-    char fname[1024+1];
-    snprintf(fname, 1024, "%s.db", key);
-    for(FILE *fp = fopen(fname, "wb"); fp; fclose(fp), fp=0) {
-        fprintf(fp, "%d", value);
-    }
-}
-int db_get(const char *key) {
-    char fname[1024+1];
-    snprintf(fname, 1024, "%s.db", key);
-    int value = 0;
-    for(FILE *fp = fopen(fname, "rb"); fp; fclose(fp), fp=0) {
-        fscanf(fp, "%d", &value);
-    }
-//  fprintf(stderr, "%s=%d\n", key, value);
-    return value;
+int is_file( const char *pathfile ) {
+    struct stat st;
+    return stat(pathfile, &st) >= 0;
 }
 
 void cwdexe(void) {

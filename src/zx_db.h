@@ -2,17 +2,21 @@
 
 typedef struct zxdb {
     char *copy, *tok;
-    char *ids[8];        // "#id|year|title|alias|publisher|max_players|score|genre"
+    char *ids[9];        // "#id|year|title|alias|publisher|type|score|genre|#tags"
     char *authors[16];   // "@role author(team)"
     char *downloads[64]; // "/file_link|release_seq|filetype_id|filetype"
 } zxdb;
 
-void zxdb_init(const char *dbfile);
-zxdb  zxdb_search(const char *entry); // either "#id", "*text*search*", or "/file.ext"
-zxdb   zxdb_print(const zxdb);
-char*  zxdb_url(const zxdb, const char *hint); // @todo:, unsigned release_seq);
-zxdb   zxdb_free(zxdb);
-char* zxdb_download(const char *url, int *len); // must free() after use
+bool  zxdb_init(const char *zxdbfile);
+bool  zxdb_initmem(const char *blob, const int len);
+zxdb   zxdb_search(const char *entry); // either "#id", "*text*search*", or "/file.ext"
+zxdb    zxdb_print(const zxdb);
+char*   zxdb_url(const zxdb, const char *hint); // @todo:, unsigned release_seq);
+zxdb    zxdb_free(zxdb);
+char*  zxdb_download(const char *url, int *len); // must free() after use
+int    zxdb_pathfile(const char *url, char *path, int pathlen); // constructs path to local file. returns true if file exists.
+bool   zxdb_loaded();
+int    zxdb_count();
 
 // impl
 #include <string.h>
@@ -20,30 +24,36 @@ char* zxdb_download(const char *url, int *len); // must free() after use
 struct map zxdb2;
 char *zxdb_alloc;
 
-void zxdb_init(const char *dbfile) {
+int zxdb_count() {
+    return map_count(&zxdb2);
+}
+
+bool zxdb_loaded() {
+    return !!zxdb_alloc;
+}
+
+bool zxdb_init(const char *zxdbfile) {
+    int len; char *blob = readfile(zxdbfile, &len);
+    if( blob && len && !zxdb_initmem(blob, len) ) return free(blob), false;
+    return true;
+}
+
+bool zxdb_initmem(const char *blob, const int len) {
     // allocate db
-    if(zxdb_alloc) return;
-    int len;
-    zxdb_alloc = readfile(dbfile, &len);
+    if(zxdb_alloc) return false;
+    if(!(blob && len)) return false;
 
-    // if not external file, must be embedded. skip binary and jump to content
-    int skip = 0;
-    if( zxdb_alloc && !strstr(dbfile, ".db") ) {
-        skip = (len - 1) - 4 - *(unsigned *)&zxdb_alloc[ len - 4 ];
-        len = *(unsigned *)&zxdb_alloc[ len - 4 ];
-        if( memcmp(zxdb_alloc + skip, "\x1f\x8b\x08", 3) ) return;
-    }
+    // ensure it's our gzipped database
+    if( memcmp(blob + 0000, "\x1f\x8b\x08",3) ) return false;
+    if( memcmp(blob + 0x0A, "Spectral.db",11) ) return false;
 
-    if( zxdb_alloc && !memcmp(zxdb_alloc + skip, "\x1f\x8b\x08",3) ) {
-        char *unc = gunzip(zxdb_alloc + skip, len, 0);
-        if( !unc ) { alert("cannot uncompress .db file"); return; }
-        free(zxdb_alloc);
-        zxdb_alloc = unc;
-    }
+    // uncompress
+    unsigned unclen;
+    char *unc = gunzip(blob, len, &unclen);
+    if( !unc ) { alert("cannot uncompress .db file"); return false; }
 
     // parse db. insert every entry
-    if( zxdb_alloc )
-    for( char *ptr = zxdb_alloc; *ptr; ) {
+    for( char *ptr = unc; (ptr < (unc+unclen)) && *ptr; ) {
         char *entry = ptr;
 
         char *lf;
@@ -51,21 +61,36 @@ void zxdb_init(const char *dbfile) {
             lf = strchr(ptr, '\n');
             if(!lf) { ptr += strlen(ptr); break; } // go to eof
             ptr = ++lf;
+            if(ptr >= (unc+unclen)) break;
             if(*ptr != '@' && *ptr != '/') break; // break at new entry
         }
 
         // inscribe entry, which goes from [entry,ptr)
         ptr[-1] = '\0';
-        char *year  = strchr(entry, '|')+1; assert(year);
+        char *zxid;
+        char *year  = strchr(entry, '|')+1; assert(year);  zxid  = va("#%.*s", year-entry-1, entry);
         char *title = strchr(year,  '|')+1; assert(title);
         char *alias = strchr(title, '|')+1; assert(alias); title = va("%.*s", alias-title-1, title);
         char *brand = strchr(alias, '|')+1; assert(brand); alias = va("%.*s", brand-alias-1, alias);
+//      char *avail = strchr(brand, '|')+1; assert(avail);
+//      char *score = strchr(avail, '|')+1; assert(score);
+//      char *genre = strchr(score, '|')+1; assert(genre);
+//      char *ttags = strchr(genre, '|')+1; assert(ttags);
 
+        map_insert(&zxdb2, zxid, entry);
         map_insert(&zxdb2, title, entry);
         if( alias[0] ) map_insert(&zxdb2, alias, entry);
+
+        char *roman = romanize(title);
+        if( strcmp(roman, title) )
+            map_insert(&zxdb2, roman, entry);
     }
 
     printf("%d ZXDB entries\n", map_count(&zxdb2));
+
+    // do not free(). keep pointers alive
+    zxdb_alloc = unc;
+    return true;
 }
 
 static
@@ -130,12 +155,74 @@ void zxdb_add_downloads(zxdb *z, char **downloads) {
     }
 }
 
+
+static
+int zxdb_compare(const void *arg1, const void *arg2) {
+    // the zxdb database is sorted by game id (#), there are no collisions there.
+    // however, we use title and alias strings for our lookups. there are like 2,000
+    // conflicting names in the database, among titles and aliases. here we try to choose
+    // which conflicting part should be kept. see: barbarian, eliminator, etc.
+    //
+    // for now, using the `brand vs brandless` heuristic and the `higher score` one.
+    //
+    // other heuristics we could use:
+    // recent vs old
+    // known brand vs unknown brand
+
+    char **a = (char**)*(VAL**)arg1; char *entry = *a;
+    char **b = (char**)*(VAL**)arg2; char *other = *b;
+
+    char *year1  = strchr(entry,  '|')+1;
+    char *title1 = strchr(year1,  '|')+1;
+    char *alias1 = strchr(title1, '|')+1;
+    char *brand1 = strchr(alias1, '|')+1;
+    char *avail1 = strchr(brand1, '|')+1;
+    char *score1 = strchr(avail1, '|')+1;
+    char *genre1 = strchr(score1, '|')+1;
+    char *ttags1 = strchr(genre1, '|')+1;
+
+    char *year2  = strchr(other,  '|')+1;
+    char *title2 = strchr(year2,  '|')+1;
+    char *alias2 = strchr(title2, '|')+1;
+    char *brand2 = strchr(alias2, '|')+1;
+    char *avail2 = strchr(brand2, '|')+1;
+    char *score2 = strchr(avail2, '|')+1;
+    char *genre2 = strchr(score2, '|')+1;
+    char *ttags2 = strchr(genre2, '|')+1;
+
+    if( !!brand1[0] ^ !!brand2[0] ) // brand vs brandless: prefer brand
+        return brand2[0] - brand1[0];
+
+    if( atof(score2) - atof(score1) ) // score: prefer higher
+        return (int)(atof(score2) - atof(score1) * 100);
+
+    return 0;
+}
+
 static
 zxdb zxdb_search_by_name(const char *name) {
+    if(name[0] != '#') puts(name);
+
     zxdb z = {0};
 
+    VAL *found = 0;
+
     // search query
-    VAL *found = map_find(&zxdb2, name);
+    int matches;
+    VAL **multi = map_multifind(&zxdb2, name, &matches);
+    if( matches ) {
+        qsort(multi, matches, sizeof(VAL*), zxdb_compare);
+#if DEV
+        if( matches > 1 ) ; // alert(va("%d matches for `%s`", matches, name));
+        if( matches > 1 )
+        for( int i = 0; i < matches; ++i ) {
+            puts(*multi[i]);
+        }
+#endif
+        found = multi[0];
+    }
+
+    // process query
     if( found ) {
         z.copy = strdup(*found);
         z.tok = strdup(*found);
@@ -149,10 +236,11 @@ zxdb zxdb_search_by_name(const char *name) {
         }
 
         // inscribe download lines [2..]
+        if( (lines[1] && lines[1][0] == '/') || (lines[1] && lines[2] && lines[2][0] == '/') )
         zxdb_add_downloads(&z, &lines[1 + (lines[1][0] == '@')]); // pick line [1] or [2] depending on line[1] being an @authors line
 
         // inscribe authors' line [1]. ignore entry strings (\r\n)
-        if( lines[1][0] == '@' ) {
+        if( lines[1] && lines[1][0] == '@' ) {
             char **authors = line;
             sep = lines[1];
             for( char *ptr = strsep(&sep, "@\r\n" ); ptr; ptr = strsep(&sep, "@\r\n" ) ) {
@@ -172,6 +260,7 @@ zxdb zxdb_search_by_name(const char *name) {
         }
     }
 
+    free(multi);
     return z;
 }
 
@@ -205,7 +294,7 @@ static char *zxdb_filename2title(const char *filename) {
         else ext = 0;
     } while(ext);
 
-    // extract (year)(publisher)
+    // extract (year)(publisher)(side 1)[48-128K]
     if( strchr(s, '(') ) *strchr(s, '(') = '\0';
 
     // convert case edges into spaces (@fixme: utf8 games; russian? spanish? czech?)
@@ -222,6 +311,8 @@ static char *zxdb_filename2title(const char *filename) {
     s = spaced;
 
     // trim lead/final spaces and double spaces
+    replace(s, " - ", "   ");
+    replace(s, "_-_", "   ");
     while( s[0] == ' ' ) ++s;
     while( s[strlen(s)-1] == ' ' ) s[strlen(s)-1] = '\0';
     while( strstr(s, "  ") ) replace(s, "  ", " ");
@@ -237,56 +328,112 @@ static char *zxdb_filename2title(const char *filename) {
     else if( strendi(s, ", LA")  ) memmove(s+3,s,strlen(s+3)), memcpy(s, "LA ", 3), s[strlen(s)-1] = '\0';
     else if( strendi(s, ", IL")  ) memmove(s+3,s,strlen(s+3)), memcpy(s, "IL ", 3), s[strlen(s)-1] = '\0';
     else if( strendi(s, ", A")   ) memmove(s+2,s,strlen(s+2)), memcpy(s, "A ", 2), s[strlen(s)-1] = '\0';
+    else if( strendi(s, ", O")   ) memmove(s+2,s,strlen(s+2)), memcpy(s, "O ", 2), s[strlen(s)-1] = '\0';
+
+    // remove: gonzzalezz - side 1, Toi Acid Game - Side 2
+    // remove: Outrun - Tape 2 - Side 1, 5_Exitos_De_Opera_Soft_Tape_1_-_Side_1,
+    const char *tags[] = {
+        " TAPE 1",
+        " TAPE 2",
+        " PART 1",
+        " PART 2",
+        " PART II",
+        " SIDE 1",
+        " SIDE 2",
+        " SIDE A",
+        " SIDE B",
+        " SIDEA-V1",
+        " SIDEA-V2",
+        " SIDEB-V1",
+        " SIDEB-V2",
+        " RELEASE 1",
+        " RELEASE 2",
+        " RELEASE 3",
+        " SMALL CASE",
+        " SMALL CARDBOARD CASE",
+        " MEDIUM CASE",
+        " BUGFIX",
+        " DEMONSTRATOR",
+        " STANDARD",
+        " EXPERT",
+        0
+    };
+    for( int i = 0; tags[i]; ++i ) {
+        if( strstr(s, tags[i]) ) {
+            strstr(s, tags[i])[0] = '\0';
+        }
+    }
 
     // convert non-alpha into spaces (@fixme: utf8 games; russian? spanish? czech?)
     for( int i = 0; s[i]; ++i ) s[i] = isalnum(s[i]) ? s[i] : '*';
 
     // final touch, remove 48 and 128 from filenames: renegade128.tzx, rasputin48.sna, etc
-    if( strstr(s, "*48K") ) memcpy(strstr(s, "*48K"), "****",  4);
-    if( strstr(s,"*128K") ) memcpy(strstr(s,"*128K"), "*****", 5);
-    if( strstr(s,  "*48") ) memcpy(strstr(s,  "*48"), "***",   3);
-    if( strstr(s, "*128") ) memcpy(strstr(s, "*128"), "****",  4);
+    if( strstr(s, "*48K") ) strstr(s, "*48K")[1] = '\0'; // memcpy(strstr(s, "*48K"), "****",  4);
+    if( strstr(s,"*128K") ) strstr(s,"*128K")[1] = '\0'; // memcpy(strstr(s,"*128K"), "*****", 5);
+    if( strstr(s,  "*48") ) strstr(s,  "*48")[1] = '\0'; // memcpy(strstr(s,  "*48"), "***",   3);
+    if( strstr(s, "*128") ) strstr(s, "*128")[1] = '\0'; // memcpy(strstr(s, "*128"), "****",  4);
 
     return s;
 }
 
-zxdb zxdb_search(const char *filename) {
-    char *s = zxdb_filename2title(filename);
+zxdb zxdb_search(const char *id) { // game.tap or #13372
+    // search by id
+    if( id[0] == '#' ) return zxdb_search_by_name(id);
 
-    // search query
+    // search by filename
+    char *s = zxdb_filename2title(id);
     zxdb z = zxdb_search_by_name( s );
 
     // if it fails, try again replacing trailing 2>"% II", 3>"% III", 4>"% IV", 5>"% V"
     // lines ago, we did pre-allocate room space for this patch.
-    if( !z.ids[0] && strendi(s, "*2") ) strcpy((char*)strendi(s,"*2"),"* II"), z = zxdb_search_by_name(s);
-    if( !z.ids[0] && strendi(s, "*3") ) strcpy((char*)strendi(s,"*3"),"* III"), z = zxdb_search_by_name(s);
-    if( !z.ids[0] && strendi(s, "*4") ) strcpy((char*)strendi(s,"*4"),"* IV"), z = zxdb_search_by_name(s);
-    if( !z.ids[0] && strendi(s, "*5") ) strcpy((char*)strendi(s,"*5"),"* V"), z = zxdb_search_by_name(s);
+    if( !z.ids[0] && strstri(s,   "*2") ) strcpy((char*)strstri(s,  "*2"), "* II*"), z = zxdb_search_by_name(s);
+    if( !z.ids[0] && strstri(s,   "*3") ) strcpy((char*)strstri(s,  "*3"),"* III*"), z = zxdb_search_by_name(s);
+    if( !z.ids[0] && strstri(s,   "*4") ) strcpy((char*)strstri(s,  "*4"), "* IV*"), z = zxdb_search_by_name(s);
+    if( !z.ids[0] && strstri(s,   "*5") ) strcpy((char*)strstri(s,  "*5"),  "* V*"), z = zxdb_search_by_name(s);
+    if( !z.ids[0] && strstri(s, "*III") ) strcpy((char*)strstri(s,"*III"),  "* 3*"), z = zxdb_search_by_name(s);
+    if( !z.ids[0] && strstri(s,  "*II") ) strcpy((char*)strstri(s, "*II"),  "* 2*"), z = zxdb_search_by_name(s);
+    if( !z.ids[0] && strstri(s,  "*IV") ) strcpy((char*)strstri(s, "*IV"),  "* 4*"), z = zxdb_search_by_name(s);
+    if( !z.ids[0] && strstri(s,   "*V") ) strcpy((char*)strstri(s,  "*V"),  "* 5*"), z = zxdb_search_by_name(s);
     return z;
 }
 
 char* zxdb_url(const zxdb z, const char *hint) {
-    /**/ if( strstri(hint, "runn") ) hint = "|0|2|";
-    else if( strstri(hint, "screen") ) hint = "|0|1|";
-    else if( strstri(hint, "inlay") && strstri(hint, "side")) hint = "|0|4|";
-    else if( strstri(hint, "inlay") && strstri(hint, "back")) hint = "|0|6|";
-    else if( strstri(hint, "inlay")) hint = "|0|5|";
-//  else if( strstri(hint, "tape")) hint = "|0|22|";
-    else if( strstri(hint, "tape")) hint = "|0|8|";
-    else if( strstri(hint, "snap")) hint = "|0|10|";
-    else if( strstri(hint, "disk")) hint = "|0|11|";
-    else if( strstri(hint, "rom")) hint = "|0|17|";
-    else if( strstri(hint, "scanned")) hint = "|0|29|";
-    else if( strstri(hint, "instr")) hint = "|0|28|";
-    else if( strstri(hint, "overlay")) hint = "|0|30|";
-    else if( strstri(hint, "map")) hint = "|0|31|";
-    else if( strstri(hint, "comic")) hint = "|0|59|";
-    else if( strstri(hint, "rzx")) hint = "|0|63|";
-    else if( strstri(hint, "pok")) hint = "|0|74|";
+
+    if( strstri(hint, "play") ) {
+        char *media = 0;
+        if(!media) media = zxdb_url(z, "disk");
+        if(!media) media = zxdb_url(z, "snap");
+        if(!media) media = zxdb_url(z, "rom");
+        if(!media) media = zxdb_url(z, "bugfix");
+        if(!media) media = zxdb_url(z, "tape");
+        return media;
+    }
+
+    int check_media = 0;
+
+    /**/ if( strstri(hint, "runn") ) hint = "|2|R"; // .scr, .gif, .png, .jpg, .mc/.mlt, .ifl (multicolor8x2 9216 = 6144+768*4)
+    else if( strstri(hint, "screen") ) hint = "|1|L"; // .scr, .gif, .png, .jpg, .mc/.mlt (multicolor8x1 12288 = 6144+768*8)
+    else if( strstri(hint, "inlay") && strstri(hint, "side")) hint = "|4|I";
+    else if( strstri(hint, "inlay") && strstri(hint, "back")) hint = "|6|I";
+    else if( strstri(hint, "inlay")) hint = "|5|I";
+    else if( strstri(hint, "bugfix")) hint = "|22|B", check_media = 1;
+    else if( strstri(hint, "tape")) hint = "|8|T", check_media = 1;
+    else if( strstri(hint, "snap")) hint = "|10|S", check_media = 1;
+    else if( strstri(hint, "disk")) hint = "|11|D", check_media = 1;
+    else if( strstri(hint, "rom")) hint = "|17|C", check_media = 1;
+    else if( strstri(hint, "mp3")) hint = "|27|B";
+    else if( strstri(hint, "scanned")) hint = "|29|S";
+    else if( strstri(hint, "instr")) hint = "|28|I";
+    else if( strstri(hint, "overlay")) hint = "|30|K"; // @todo: addme
+    else if( strstri(hint, "map")) hint = "|31|G";
+    else if( strstri(hint, "comic")) hint = "|59|C";
+    else if( strstri(hint, "rzx")) hint = "|63|R";
+    else if( strstri(hint, "pok")) hint = "|74|P";
 
     for( int i = 0; z.downloads[i]; ++i ) {
         if( strstri(z.downloads[i], hint) ) {
             char *url = va("%.*s", strchr(z.downloads[i],'|') - z.downloads[i], z.downloads[i]);
+            if( strstri(url, ".szx") || strstri(url, ".slt") ) continue;
             return url;
         }
     }
@@ -294,8 +441,10 @@ char* zxdb_url(const zxdb z, const char *hint) {
     return NULL;
 }
 
-char* zxdb_download(const char *url, int *len) {
+static
+char* zxdb_download_(const char *url, int *len) {
     if( !url ) return 0;
+
     if( url[0] == '/' ) {
         const char *mirror = 0;
         /**/ if( !strncmp(url, "/nvg/", 5) ) {
@@ -321,4 +470,36 @@ char* zxdb_download(const char *url, int *len) {
     }
     // puts(url);
     return download(url, len);
+}
+
+int zxdb_pathfile(const char *url, char *path, int pathlen) {
+    if( !url ) return 0;
+
+    // @fixme: this depends on a perfect hash function right now. so far, fnv1a is a pass; crc32 is not.
+    uint64_t hash = fnv1a(url, strlen(url));
+    uint32_t hash1 = hash >> 32ULL;
+    uint32_t hash2 =(hash << 32ULL) >> 32ULL;
+
+    do_once mkdir(".Spectral", 0777);
+    snprintf(path, pathlen, ".Spectral/%02X", hash1 >> 24); mkdir(path, 0777);
+    snprintf(path, pathlen, ".Spectral/%02X/%06X", hash1 >> 24, (hash1 << 8) >> 8); mkdir(path, 0777);
+    snprintf(path, pathlen, ".Spectral/%02X/%06X/%08X", hash1 >> 24, (hash1 << 8) >> 8, hash2);
+
+    return is_file(path);
+}
+
+char* zxdb_download(const char *url, int *len) {
+    if( !url ) return NULL;
+
+    char path[128];
+    zxdb_pathfile(url, path, 128);
+
+    char *cache = readfile(path, len);
+    if( !cache ) {
+        cache = zxdb_download_(url, len);
+        if( cache ) {
+            writefile(path, cache, *len);
+        }
+    }
+    return cache;
 }

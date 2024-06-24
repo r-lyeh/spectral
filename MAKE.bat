@@ -18,9 +18,11 @@ if [ "$(uname)" != "Darwin" ]; then
 [ ! -f ".setup" ] && sudo apt-get -y update && sudo apt-get -y install gcc libx11-dev gcc libgl1-mesa-dev libasound2-dev mesa-common-dev  && echo>.setup
 
 # compile --------------------------------------------------------------------
-gcc src/zx.c -I src -o ./Spectral.linux -O3 -DNDEBUG=3 -Wno-unused-result -Wno-unused-value -Wno-format -Wno-multichar -Wno-pointer-sign -Wno-string-plus-int -Wno-empty-body -lm -lX11 -lGL -lasound -lpthread $* || exit
+gcc src/app.c -I src -o ./Spectral.linux -O3 -DNDEBUG=3 -Wno-unused-result -Wno-unused-value -Wno-format -Wno-multichar -Wno-pointer-sign -Wno-string-plus-int -Wno-empty-body -lm -lX11 -lGL -lasound -lpthread $* || exit
 upx -9 Spectral.linux
-src/res/zxdb/append.linux Spectral.linux src/res/zxdb/Spectral.db.gz
+src/res/embed.linux Spectral.linux @SpectralEmBeDdEd
+src/res/embed.linux Spectral.linux src/res/zxdb/Spectral.db.gz
+src/res/embed.linux Spectral.linux @SpectralEmBeDdEd
 
 fi
 
@@ -28,8 +30,10 @@ if [ "$(uname)" = "Darwin" ]; then
 
 # compile --------------------------------------------------------------------
 export SDKROOT=$(xcrun --show-sdk-path)
-gcc -ObjC src/zx.c -I src -o ./Spectral.osx -O3 -DNDEBUG=3 -Wno-unused-result -Wno-unused-value -Wno-format -Wno-multichar -Wno-pointer-sign -Wno-string-plus-int -Wno-empty-body -framework cocoa -framework iokit -framework CoreFoundation -framework CoreAudio -framework AudioToolbox -framework OpenGL -lm $* || exit
-src/res/zxdb/append.osx Spectral.osx src/res/zxdb/Spectral.db.gz
+gcc -ObjC src/app.c -I src -o ./Spectral.osx -O3 -DNDEBUG=3 -Wno-unused-result -Wno-unused-value -Wno-format -Wno-multichar -Wno-pointer-sign -Wno-string-plus-int -Wno-empty-body -framework cocoa -framework iokit -framework CoreFoundation -framework CoreAudio -framework AudioToolbox -framework OpenGL -lm $* || exit
+src/res/embed.osx Spectral.osx @SpectralEmBeDdEd
+src/res/embed.osx Spectral.osx src/res/zxdb/Spectral.db.gz
+src/res/embed.osx Spectral.osx @SpectralEmBeDdEd
 
 # embed icon and make .app
 test -d Spectral.app && rm -rf Spectral.app
@@ -54,7 +58,7 @@ exit
 
 @echo off
 
-for /f "tokens=1,* delims= " %%a in ("%*") do set ALL_BUT_FIRST=%%b
+for /f "tokens=1,* delims= " %%a in ("%*") do set ALL_FROM_2ND=%%b
 
 if "%1"=="-h" (
     echo make [dev^|opt^|rel] [compiler-flags]
@@ -62,7 +66,7 @@ if "%1"=="-h" (
 )
 
 if "%1"=="test" (
-    call make opt -DPRINTER -DTESTS %ALL_BUT_FIRST% || goto error
+    call make opt -DPRINTER -DTESTS %ALL_FROM_2ND% || goto error
     pause
 
     rem Z80------------------------------------------
@@ -98,26 +102,49 @@ if "%1"=="test" (
     exit /b
 )
 
-if "%1"=="dev" (
-    cl src\zx.c src\sys_window.cc -I src /FeSpectral.exe /Zi %ALL_BUT_FIRST% || goto error
-    copy /y src\res\zxdb\Spectral.db.gz Spectral.db 1>nul 2>nul
+if "%1"=="tidy" (
+    del *.obj
+    del *.exe
+    del *.pdb
+    del *.ilk
+    del *.zip
+    del src\res\zxdb\*.db
+    del src\res\zxdb\*.exe
+    del src\res\zxdb\*.sqlite
+    exit /b
+)
 
-    tasklist /fi "ImageName eq remedybg.exe" 2>NUL | find /I "exe">NUL || start remedybg -q -g Spectral.exe
+if "%1"=="dev" (
+    call make nil /Zi %ALL_FROM_2ND% || goto error
+    src\res\embed Spectral.exe @SpectralEmBeDdEd
+    src\res\embed Spectral.exe src\res\zxdb\Spectral.db.gz
+    src\res\embed Spectral.exe @SpectralEmBeDdEd
+
+    tasklist /fi "ImageName eq remedybg.exe" 2>NUL | find /I "exe">NUL || (where /q remedybg.exe && start remedybg -q -g Spectral.exe)
 
     exit /b
 )
 
 if "%1"=="opt" (
     rem do not use /O1 or /O2 below. ayumi drums will be broken in AfterBurner.dsk otherwise
-    call make nil /Ox /MT /DNDEBUG /GL /GF /arch:AVX2 %ALL_BUT_FIRST% || goto error
-    copy /y src\res\zxdb\Spectral.db.gz Spectral.db 1>nul 2>nul
+    call make nil /Ox /MT /DNDEBUG /GL /GF /arch:AVX2 %ALL_FROM_2ND% || goto error
+    where /q upx.exe && upx Spectral.exe
+    src\res\embed Spectral.exe @SpectralEmBeDdEd
+    copy /y Spectral.exe SpectralNoZXDB.exe
+    src\res\embed Spectral.exe src\res\zxdb\Spectral.db.gz
+    src\res\embed Spectral.exe @SpectralEmBeDdEd
     exit /b
 )
 
 if "%1"=="rel" (
-    call make opt -Dmain=WinMain -DNDEBUG=3 %ALL_BUT_FIRST% || goto error
-    where /q upx.exe && upx Spectral.exe
-    src\res\zxdb\append Spectral.exe src\res\zxdb\Spectral.db.gz && if exist "Spectral.db" del Spectral.db
+    call make opt -Dmain=WinMain -DNDEBUG=3 %ALL_FROM_2ND% || goto error
+
+    del *.ilk 1> nul 2> nul
+    del *.pdb 1> nul 2> nul
+    del *.obj 1>nul 2>nul
+    del *.ilk 1>nul 2>nul
+    del *.pdb 1>nul 2>nul
+
     exit /b 1
 )
 
@@ -131,17 +158,10 @@ where /q cl.exe || call "%ProgramFiles(x86)%/microsoft visual studio/2019/commun
 where /q cl.exe || call "%ProgramFiles(x86)%/microsoft visual studio/2017/community/VC/Auxiliary/Build/vcvarsx86_amd64.bat" >nul 2>nul
 
 @echo on
-cl src\zx.c src\sys_window.cc -I src /FeSpectral.exe %ALL_BUT_FIRST% || goto error
-copy /y src\res\zxdb\Spectral.db.gz Spectral.db 1>nul 2>nul
+cl src\app.c src\sys_window.cc -I src /FeSpectral.exe %ALL_FROM_2ND% || goto error
 
 @echo off
 where /Q ResourceHacker.exe && ResourceHacker.exe -open Spectral.exe -save Spectral.exe -action addskip -res src\res\img\noto_1f47b.ico -mask ICONGROUP,MAINICON,0
-
-del *.ilk 1> nul 2> nul
-del *.pdb 1> nul 2> nul
-del *.obj 1>nul 2>nul
-del *.ilk 1>nul 2>nul
-del *.pdb 1>nul 2>nul
 
 exit /b 0
 

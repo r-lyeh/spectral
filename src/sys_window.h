@@ -13,6 +13,13 @@ void    window_override_icons();
 char*   window_title(window *win, const char *title);
 
 
+int window_keyrepeat(window *app, unsigned char vk) {
+    static int table[256] = {0}; // @fixme: table[num_windows][256];
+    table[vk] *= !!window_pressed(app, vk);
+    table[vk] += !!window_pressed(app, vk);
+    return table[vk] == 1 || table[vk] > 32;
+}
+
 char*   prompt(const char *title, const char *caption, const char *defaults );
 #define alert(body) alert("Warning", body)
 void    die(const char *msg);

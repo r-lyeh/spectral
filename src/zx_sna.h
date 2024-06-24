@@ -411,6 +411,9 @@ int pok_load(const byte *src, int len) {
 }
 
 int guess(const byte *ptr, int size) { // guess required model type for given data
+    // ay first
+    if( size > 0x08 &&(!memcmp(ptr, "ZXAYEMUL", 8) )) return 128;
+
     // dsk first
     if( size > 0x08 &&(!memcmp(ptr, "MV - CPC", 8) || !memcmp(ptr, "EXTENDED", 8)) ) return 300;
 

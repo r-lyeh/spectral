@@ -5,7 +5,7 @@
 // header [16] + version [16]
 // @todo: uncompressed SCR page, then get this page excluded in 16ram pages block
 // z80 regs (in alphabetical order) [16 each]
-//  AF AF2 BC BC2 DE DE2 HL HL2 IFF12 IM IR IX IY PC SP WZ
+//  AF AF2 BC BC2 DE DE2 HL HL2 IFF1 IFF2 IM IR IX IY PC SP WZ
 // ports (in ascending order, ideally)
 //  addr [16], data [16]
 //  [...]
@@ -47,7 +47,7 @@ int export_state(FILE *fp) {
         ( errors += fwrite( (count += (len), (ptr)), (len), 1, fp ) != 1 )
 
     #define put16(value) \
-        putnn( ( temp = bswap16(value), &temp ), 2 )
+        putnn( ( temp = (value), temp = bswap16(temp), &temp ), 2 )
 
     put16(STATE_HEADER);
     put16(STATE_VERSION);
@@ -63,10 +63,11 @@ int export_state(FILE *fp) {
     put16(DE(cpu));
     put16(DE2(cpu));
     put16(HL(cpu));
-    put16(HL2(cpu));       uint16_t cpu_iff12 = (IFF1(cpu) << 8) | (IFF2(cpu) & 255);
-    put16(cpu_iff12);
-    put16(IM(cpu));        uint16_t cpu_ir = (I(cpu) << 8) | (R(cpu) & 255);
-    put16(cpu_ir);
+    put16(HL2(cpu));
+    put16(IFF1(cpu));
+    put16(IFF2(cpu));
+    put16(IM(cpu));
+    put16(IR(cpu));
     put16(IX(cpu));
     put16(IY(cpu));
     put16(PC(cpu));
@@ -155,10 +156,11 @@ int import_state(FILE *fp) {
     get16(DE(cpu));
     get16(DE2(cpu));
     get16(HL(cpu));
-    get16(HL2(cpu));    uint16_t cpu_iff12;
-    get16(cpu_iff12);   IFF1(cpu)=cpu_iff12>>8; IFF2(cpu)=cpu_iff12&255;
-    get16(IM(cpu));     uint16_t cpu_ir;
-    get16(cpu_ir);      I(cpu)=cpu_ir>>8; R(cpu)=cpu_ir&255;
+    get16(HL2(cpu));
+    get16(IFF1(cpu));
+    get16(IFF2(cpu));
+    get16(IM(cpu));
+    get16(IR(cpu));
     get16(IX(cpu));
     get16(IY(cpu));
     get16(PC(cpu));

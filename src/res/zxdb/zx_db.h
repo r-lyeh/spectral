@@ -9,7 +9,7 @@ typedef struct zxdb {
 zxdb zxdb_search(const char *entry); // either "#id", "*text*search*", or "/file.ext"
 zxdb  zxdb_print(const zxdb z);
 char* zxdb_pickurl(const zxdb z, const char *hint); // @todo:, unsigned release_seq);
-bool  zxdb_download(FILE *out, const char *url);
+char* zxdb_download(const char *url, int *len);
 void zxdb_free(struct zxdb z);
 
 // impl
@@ -57,7 +57,9 @@ char* zxdb_pickurl(const zxdb z, const char *hint) {
     return NULL;
 }
 
-bool zxdb_download(FILE *out, const char *url) {
+char* zxdb_download(const char *url, int *len) {
+    if( !url ) return 0;
+
     if( url[0] == '/' ) {
         const char *mirror = 0;
         /**/ if( !strncmp(url, "/nvg/", 5) ) {
@@ -79,10 +81,10 @@ bool zxdb_download(FILE *out, const char *url) {
             mirror = "https://";
             url += 1;
         }
-        return mirror ? zxdb_download(out, va("%s%s", mirror, url)) : 0;
+        return mirror ? download(va("%s%s", mirror, url), len) : 0;
     }
     // puts(url);
-    return download_file(out, url);
+    return download(url, len);
 }
 
 static char *zxdb_filename2title(const char *filename) {
@@ -217,7 +219,12 @@ void zxdb_init(const char *dbfile) {
 }
 
 zxdb zxdb_search_by_expr(const char *expr) {
-    // returns query "#id|year|title|alias|publisher|max_players|score|genre"
+    // create _tags temp table
+    do_once
+        db_query("create temp table _tags0 as select entry_id,(select name from tags where id = M.tag_id) as tag from members M;"),
+        db_query("create temp table _tags as select entry_id, concat('#',group_concat(tag,'#')) as tags from ( select entry_id, tag from _tags0 order by entry_id, tag) group by entry_id;");
+
+    // returns query "#id|year|title|alias|publisher|max_players|score|genre|tags"
     // sorted by descending score, so first pick in list is likely the right one (see: multiple Eliminator titles)
     #define ZXDB_SEARCH \
     "select id,min(9999, " \
@@ -234,7 +241,10 @@ zxdb zxdb_search_by_expr(const char *expr) {
     "   ) " \
     ") as year,title,(select title from aliases where entry_id = E.id) as alias," \
     "(select name from labels where id = (select label_id from publishers where release_seq = 0 and entry_id = E.id limit 1)) as publisher," \
-    "max_players,(select score from scores where entry_id = E.id) as score,(select text from genretypes where id = E.genretype_id) as genre " \
+    "concat(availabletype_id,replace(is_xrated,'1','X'),machinetype_id,',',(select text from machinetypes where id = E.machinetype_id)) as type," \
+    "(select score from scores where entry_id = E.id) as score," \
+    "concat(genretype_id,(select text from genretypes where id = E.genretype_id)) as genre," \
+    "(select tags from _tags where entry_id=E.id) as tags " \
     "FROM entries E WHERE " \
     "(machinetype_id <= 10 OR machinetype_id = 14) AND " /*16,16/48,48,48/128,128,+2,+3,+2a/+3,+2b or pentagon*/ \
     "(genretype_id <= 32 OR (genretype_id >= 72 AND genretype_id <= 78)) AND " /*games or demos*/ \
@@ -252,6 +262,10 @@ zxdb zxdb_search_by_expr(const char *expr) {
     " (select roletype_id from roles where label_id=E.label_id AND entry_id=E.entry_id) as role," \
     " (select name from labels where id=E.label_id) as author,"\
     " (select name from labels where id=E.team_id) as team from authors E where entry_id=%d limit 15;", atoi(z.id)
+
+//    "tag_id|entry_id|variant|category_id|member_seq|tag"
+//    "select *,(select name from tags where id = E.tag_id) as tag from members E where entry_id = 5525 limit 10;"
+//     SELECT Column1, group_concat(Column2) FROM Table GROUP BY Column1
 
     zxdb z = {0};
 

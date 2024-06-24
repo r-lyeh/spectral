@@ -24,7 +24,7 @@
   drop table remakes; -- modern remakes of Spectrum programs
 --drop table scores; -- average score received by each entry at main websites
   drop table scraps; -- obsolete files from the Original WorldOfSpectrum
-  drop table tags; -- sets of programs with similar characteristics (participants in the same competition, based on the same original game, etc)
+--drop table tags; -- sets of programs with similar characteristics (participants in the same competition, based on the same original game, etc)
   drop table topics; -- catalogue of magazine sections
 
 -- RELATIONSHIP TABLES
@@ -35,7 +35,7 @@
 --drop table magrefs; -- associate entries or labels to pages from magazine issues about them (magazine references)
   drop table magreffeats; -- associate magazine references to features
   drop table magreflinks; -- associate magazine references to links about them
-  drop table members; -- associate tags to their list of programs
+--drop table members; -- associate tags to their list of programs
   drop table permissions; -- associate labels to distribution permissions granted to websites
 --drop table publishers; -- associate entries to their publishers
   drop table relatedlicenses; -- associate programs to their inspirations or tie-in licenses

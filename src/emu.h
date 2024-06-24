@@ -49,6 +49,7 @@ int play(int sample, unsigned count); // this is from sys headers actually
 #define SP(cpu)    (cpu).sp
 #define I(cpu)     (cpu).i
 #define R(cpu)     (cpu).r
+#define IR(cpu)    (cpu).ir
 #define IM(cpu)    (cpu).im
 #define IFF1(cpu)  (cpu).iff1
 #define IFF2(cpu)  (cpu).iff2

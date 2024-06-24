@@ -1,5 +1,4 @@
 #include <windows.h>
-
 #pragma comment(lib, "gdi32")
 #pragma comment(lib, "user32")
 

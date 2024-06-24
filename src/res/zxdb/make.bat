@@ -27,13 +27,11 @@ del ZXDB_mysql.sql
 del ZXDB_sqlite.sql
 
 rem prompt user
-echo We may convert the SQLite database into a custom DB file now.
-echo If you convert the DB now, next Spectral build will use this custom DB backend ^(1MiB overhead^).
-echo If you skip the conversion now, next Spectral build will include and use the SQLite backend ^(56MiB overhead^).
+echo We have to convert the SQLite database (133 MiB) into a custom one (1 MiB).
 echo The conversion is painfully slow, though.
 choice /C YN /M "Convert? "
 
 rem convert if requested
 if "%errorlevel%"=="1" (
-zxdb2txt 0..65535 > spectral.db && python -m gzip --best spectral.db && echo Ok!
+zxdb2txt 0..65535 > Spectral.db && python -m gzip --best Spectral.db && echo Ok!
 )

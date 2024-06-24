@@ -1,5 +1,7 @@
 // known issues:
 
+// starts in turborom mode ??? see battle valley
+
 // runahead
 // - bonanza bros.dsk
 
@@ -8,20 +10,56 @@
 // tape
 // - red/cyan tape freq bars
 
+// quickload
+// - crash by pressing F12 after main window is displayed
+
+// media
+// scl not being saved on exit (borderbreak)
+
+// sav
+// - .db2 in .sav or binary .ini
+// - no settings in .sav
+// - add setting: games folder, 
+
+// gui
+// - utf8 no czech/hungarian/slovak: ČĎĚŇŘŠŤŽ čďěňřšťž Ýý ÔôŐő ŰűŮů Ĺĺ Ľľ Ŕŕ (see tabs: d,k,m,p,r,t)
+// - no selector (pok)
+// - no inputbox
+// - no notify black panel
+// - no notify scroll
+
+// gallery
+// - cadaverion,coliseum: no zxdb info
+// - champions of cricket + world cup cricket : crash (html)
+// - no proper model reset (see return null)
+// - text mode corrupts vram
+// - no download bar
+// - no flashcolor x2
+// - no ifl/mlt
+// - wrong cache path (no zxdb id) .Spectral/Z/Zizala-#88.zip
+
 // zxdb
-// - no cache library
-// - no gifs
-// - no mp3s
 // - infos get lost between different .sav sessions
-// - overlay: no scroll (mouse/key), no zooming, no panning
+// - overlay: no scroll (mouse/key), no zooming
 // - JACKNIP.TAP ; difficult to get it right without hyphenation. best we could do for now is search JACKNIP%
 // - reset does not clear zxdb
+// - instructions: wordwrap, utf8 bom
+// - no mp3s
+// - no ays
+// - maps: battle valley
+
+// zxplayer
+// - cant load zip/rar files because FILE *fp is not pointing at seek pos
+
+// trdos+L mode
 
 // 128/+2:
 // - parapshock should break; it doesnt
 // - parapshock + turborom
 // .ay files:
-// - could use ay2sna again in the future
+// - could use left/right keys to change tracks
+// - could fill vram so it displays author, filename, etc datas
+// - felt the 0x8000/0x10000 magic numbers in zx_ay can be removed if we switch vars to be unsigned
 // .dsk files:
 // - no offset-info\r\n extension. see: mercs(samdisk), paperboy2
 // .sav files:
@@ -64,12 +102,9 @@
 // ports:
 // - linux: no mouse clip
 // - osx: no mouse clip
-// - osx: no icons; see https://gist.github.com/oubiwann/453744744da1141ccc542ff75b47e0cf
-// - osx: no cursors; https://stackoverflow.com/questions/30269329/creating-a-windowed-application-in-pure-c-on-macos
-// - osx: no drag n drop
 // - osx: retina too heavy?
 // timing:
-// - border: sentinel, defenders of earth, dark star, super wonder boy (pause)
+// - border: sentinel, defenders of earth, dark star, gyroscope II, super wonder boy (pause)
 // - border: aquaplane, olympic games, vectron, mask3, jaws, platoon
 // - multicolor: mask3, shock megademo, MDA, action force 2, old tower, hardy
 // - contended: exolon main tune requires contended memory, otherwise it's too fast +15% tempo
@@ -101,8 +136,7 @@ int ZX_RUNAHEAD = 0; // yes/no: improves input latency
 int ZX_MOUSE = 1; // yes/no: kempston mouse
 int ZX_ULAPLUS = 1; // yes/no: ulaplus 64color mode
 int ZX_GUNSTICK = 0; // yes/no: gunstick/lightgun @fixme: conflicts with kempston & kmouse
-int ZX_DEBUG = 0; // status bar, z80 disasm
-float ZX_FPS = 1; // fps multiplier: 0 (max), x1 (50 pal), x1.2 (60 ntsc), x2 (7mhz), x4 (14mhz)
+int ZX_FPS = 100; // fps multiplier: 0 (max), x100 (50 pal), x120 (60 ntsc), x200 (7mhz), x400 (14mhz)
 int ZX_AUTOLOCALE = 0; // yes/no: automatically patches games from foreign languages into english
 int ZX_FASTCPU = 0; // yes/no: max cpu speed
 int ZX_FASTTAPE = 1; // yes/no: max tape speed
@@ -112,14 +146,23 @@ int ZX_PENTAGON = 0; // DEV; // whether the 128 model emulates the pentagon or n
 int ZX_KLMODE = 0; // 0:(K mode in 48, default), 1:(L mode in 48)
 int ZX_KLMODE_PATCH_NEEDED = 0; // helper internal variable, must be init to match ZX_KLMODE
 
+int ZX_PLAYER = 0; // 0:app is full featured emulator, 1:app is a small zx player with reduced functionality
+
+int ZX_BROWSER = 2; // game browser version to use, currently only v1 is supported
+
+int ZX_DEVTOOLS = 0; // 0: regular, 1: development tools (@todo: profiler,analyzer)
+int ZX_DEBUG = 0; // status bar, z80 disasm
+
 const
 int ZX_ALTROMS = 0; // 0:(no, original), 1:(yes, custom)
 
+int ZX_INPUT = 1;
 
 void logport(word port, byte value, int is_out);
 void outport(word port, byte value);
 byte inport(word port);
 
+void port_0x00fe(byte value);
 void port_0x1ffd(byte value);
 void port_0x7ffd(byte value);
 void port_0xbffd(byte value);
@@ -130,9 +173,17 @@ void boot(int model, unsigned flags);
 void reset(unsigned flags);
 void eject();
 
-void*    quicksave(unsigned slot);
-void*    quickload(unsigned slot);
+void run(unsigned TS);
 
+void frame_new();
+void frame(int drawmode, int do_sim); // no render (<0), whole frame (0), scanlines (1)
+
+void* quicksave(unsigned slot);
+void* quickload(unsigned slot);
+
+unsigned border[71680];
+unsigned border_num;
+uint64_t border_org;
 
 // z80
 z80_t cpu;
@@ -246,19 +297,21 @@ int medias;
 void media_reset() { medias = 0; for(int i=0;i<16;++i) media[i].bin = realloc(media[i].bin, media[i].len = media[i].pos = 0); }
 void media_mount(const byte *bin, int len) { media[medias].bin = memcpy(realloc(media[medias].bin, media[medias].len = len), bin, len), media[medias].pos = 0, medias++; }
 
+enum { ALL_FILES = 0, GAMES_ONLY = 6*4, TAPES_AND_DISKS_ONLY = 9*4, DISKS_ONLY = 12*4 };
+int file_is_supported(const char *filename, int skip) {
+    const char *ext = strrchr(filename ? filename : "", '.');
+    return ext && strstri(skip+".gz .zip.rar.pok.scr.ay .rom.sna.z80.tap.tzx.csw.dsk.img.mgt.trd.fdi.scl.$b.$c.$d.", ext);
+}
+
+#include "zx_ay.h"
 #include "zx_dis.h"
 #include "zx_rom.h"
 #include "zx_dsk.h"
 #include "zx_tap.h" // requires page128
 #include "zx_tzx.h"
 #include "zx_sna.h" // requires page128, ZXBorderColor
+#include "zx_ula.h"
 #include "zx_db.h"
-
-enum { ALL_FILES = 0, GAMES_ONLY = 5*4, TAPES_AND_DISKS_ONLY = 8*4, DISKS_ONLY = 11*4 };
-int file_is_supported(const char *filename, int skip) {
-    const char *ext = strrchr(filename ? filename : "", '.');
-    return ext && strstri(skip+".gz .zip.rar.pok.scr.rom.sna.z80.tap.tzx.csw.dsk.img.mgt.trd.fdi.scl.$b.$c.", ext);
-}
 
 // 0: cannot load, 1: snapshot loaded, 2: tape loaded, 3: disk loaded
 int loadbin_(const byte *ptr, int size, int preloader) {
@@ -286,6 +339,10 @@ int loadbin_(const byte *ptr, int size, int preloader) {
         sizeof ld16bas, sizeof ld48bas, sizeof ld128bas, sizeof ldplus2bas, sizeof ldplus2abas, sizeof ldplus3bas,
         sizeof ld16bin, sizeof ld48bin, sizeof ld128bin, sizeof ldplus2bin, sizeof ldplus2abin, sizeof ldplus3bin,
     };
+
+    if( load_ay(ptr, (int)size) ) {
+        return 1;
+    }
 
     // dsk first
     if(!memcmp(ptr, "MV - CPC", 8) || !memcmp(ptr, "EXTENDED", 8)) {
@@ -351,22 +408,129 @@ int loadbin(const byte *ptr, int size, int preloader) {
     return ret;
 }
 
+
+static byte* merge;
+static size_t merge_len;
+void glue_init() {
+    free(merge); merge = 0;
+    merge_len = 0;
+}
+void *glue(const byte *data, size_t len) {
+    merge = realloc(merge, merge_len + len);
+    memcpy(merge + merge_len, data, len);
+    merge_len += len;
+    return merge;
+}
+size_t glue_len() {
+    return merge_len;
+}
+void *zip_read(const char *filename, size_t *size) {
+    glue_init();
+
+    // up to 64 tapes per zip (usually up to 4 max)
+    char *alpha_tapes[64] = {0};
+    int count_tapes = 0;
+
+    // quick rar test
+    rar *r = rar_open(filename, "rb");
+    if( r ) {
+        for( unsigned i = 0 ; count_tapes < 64 && i < rar_count(r); ++i ) {
+            if( !file_is_supported(rar_name(r,i), ALL_FILES) ) continue;
+
+            printf("  %d) ", i+1);
+            printf("[%08X] ", rar_hash(r,i));
+            printf("$%02X ", rar_codec(r,i));
+            printf("%s ", rar_modt(r,i));
+            printf("%5s ", rar_file(r,i) ? "" : "<dir>");
+            printf("%11u ", rar_size(r,i));
+            printf("%s ", rar_name(r,i));
+            void *data = rar_extract(r,i);
+            printf("\r%c\n", data ? 'Y':'N'); // %.*s\n", rar_size(r,i), (char*)data);
+
+            // append data to merge
+            glue(data, rar_size(r,i));
+            if(size) *size = merge_len;
+            rar_free(r,data);
+
+            // keeping glueing tapes
+            if(strstr(rar_name(r,i),".tap") || strstr(rar_name(r,i),".tzx")) {
+            continue;
+            }
+            break;
+        }
+
+        rar_close(r);
+        return merge;
+    }
+
+
+    // test contents of file
+    zip *z = zip_open(filename, "rb");
+    if( z ) {
+        for( unsigned i = 0 ; count_tapes < 64 && i < zip_count(z); ++i ) {
+            void *data = file_is_supported(zip_name(z,i),ALL_FILES) ? zip_extract(z,i) : 0;
+            if(!data) continue;
+            free(data);
+
+            alpha_tapes[count_tapes++] = zip_name(z,i);
+        }
+
+        if( count_tapes )
+        qsort(alpha_tapes, count_tapes, sizeof(char *), qsort_strcmp);
+
+        for( unsigned j = 0 ; j < count_tapes; ++j ) {
+            int i = zip_find(z, alpha_tapes[j]); // convert entry to index. returns <0 if not found.
+
+            printf("  %d) ", i+1);
+            printf("[%08X] ", zip_hash(z,i));
+            printf("$%02X ", zip_codec(z,i));
+            printf("%s ", zip_modt(z,i));
+            printf("%5s ", zip_file(z,i) ? "" : "<dir>");
+            printf("%11u ", zip_size(z,i));
+            printf("%s ", zip_name(z,i));
+            void *data = zip_extract(z,i);
+            printf("\r%c\n", data ? 'Y':'N'); // %.*s\n", zip_size(z,i), (char*)data);
+
+            // append data to merge
+            glue(data, zip_size(z,i));
+            if(size) *size = merge_len;
+            free(data);
+
+            // keeping glueing tapes
+            if(strstr(zip_name(z,i),".tap") || strstr(zip_name(z,i),".tzx")) {
+            continue;
+            }
+            break;
+        }
+
+        zip_close(z);
+        return merge;
+    } else {
+        printf("no zip/rar contents in %s archive\n", filename);
+    }
+    return 0;
+}
+
 static struct zxdb ZXDB;
-static char *last_load = 0;
+static char *last_load;
 int loadfile(const char *file, int preloader) {
     if( !file ) return 0;
-    last_load = (free(last_load), strdup(file));
-    file = last_load;
+
+    const char *bak = file;
+    file = last_load = (free(last_load), strdup(file));
 
 #if TESTS
     printf("\n\n%s\n-------------\n\n", file);
 #endif
 
     char *ptr = 0; size_t size = 0;
-    void *zip_read(const char *filename, size_t *size);
+#if 0
     if( strstr(file, ".zip") || strstr(file,".rar") ) {
         ptr = zip_read(file, &size); // @leak
-
+#else
+    ptr = zip_read(file, &size); // @leak
+    if( 1 ) {
+#endif
         if( ptr ) {
             // update file from archived filename. use 1st entry if multiple entries on zipfile are found
             for( zip *z = zip_open(file, "rb"); z; zip_close(z), z = 0 )
@@ -459,6 +623,9 @@ int loadfile(const char *file, int preloader) {
     if( ok && preloader ) { // probably a game, so use ZXDB
         // ZXDB = zxdb_free(ZXDB);
         zxdb_print( ZXDB = zxdb_search(file) );
+
+        if( !ZXDB.tok )
+        zxdb_print( ZXDB = zxdb_search(bak) );
     }
 
     if( !ok ) {
@@ -469,128 +636,13 @@ int loadfile(const char *file, int preloader) {
 }
 
 
-rgba ZXPaletteDef[64] = { // 16 regular, 64 ulaplus
-#if 0 // check these against SHIFT-SPC during reset
-    rgb(0x00,0x00,0x00),
-    rgb(0x00,0x00,0xCD),
-    rgb(0xCD,0x00,0x00),
-    rgb(0xCD,0x00,0xCD),
-    rgb(0x00,0xCD,0x00),
-    rgb(0x00,0xCD,0xCD),
-    rgb(0xCD,0xCD,0x00),
-    rgb(0xD4,0xD4,0xD4),
-
-    rgb(0x00,0x00,0x00),
-    rgb(0x00,0x00,0xFF),
-    rgb(0xFF,0x00,0x00),
-    rgb(0xFF,0x00,0xFF),
-    rgb(0x00,0xFF,0x00),
-    rgb(0x00,0xFF,0xFF),
-    rgb(0xFF,0xFF,0x00),
-    rgb(0xFF,0xFF,0xFF),
-#elif 0 // my fav, i guess
-    rgb(0x00,0x00,0x00), // normal: black,blue,red,pink,green,cyan,yellow,white
-    rgb(0x00,0x00,0xC0), // note: D7 seems fine too
-    rgb(0xC0,0x00,0x00),
-    rgb(0xC0,0x00,0xC0),
-    rgb(0x00,0xC0,0x00),
-    rgb(0x00,0xC0,0xC0),
-    rgb(0xC0,0xC0,0x00),
-    rgb(0xC0,0xC0,0xC0),
-
-    rgb(0x00,0x00,0x00), // bright: black,blue,red,pink,green,cyan,yellow,white
-    rgb(0x00,0x00,0xFF),
-    rgb(0xFF,0x00,0x00),
-    rgb(0xFF,0x00,0xFF),
-    rgb(0x00,0xFF,0x00),
-    rgb(0x00,0xFF,0xFF),
-    rgb(0xFF,0xFF,0x00),
-    rgb(0xFF,0xFF,0xFF),
-#elif 0
-    // Richard Atkinson's colors (zx16/48)
-    rgb(0x06,0x08,0x00),
-    rgb(0x0D,0x13,0xA7),
-    rgb(0xBD,0x07,0x07),
-    rgb(0xC3,0x12,0xAF),
-    rgb(0x07,0xBA,0x0C),
-    rgb(0x0D,0xC6,0xB4),
-    rgb(0xBC,0xB9,0x14),
-    rgb(0xC2,0xC4,0xBC),
-
-    rgb(0x06,0x08,0x00),
-    rgb(0x16,0x1C,0xB0),
-    rgb(0xCE,0x18,0x18),
-    rgb(0xDC,0x2C,0xC8),
-    rgb(0x28,0xDC,0x2D),
-    rgb(0x36,0xEF,0xDE),
-    rgb(0xEE,0xEB,0x46),
-    rgb(0xFD,0xFF,0xF7)
-#elif 1 // vivid
-    rgb(84/3,77/3,84/3), // made it x3 darker
-    // rgb(0x06,0x08,0x00), // normal: black,blue,red,pink,green,cyan,yellow,white
-    rgb(0x00,0x00,0xAB), // D8 and 96 looked fine
-    rgb(0xAB,0x00,0x00),
-    rgb(0xAB,0x00,0xAB),
-    rgb(0x00,0xAB,0x00),
-    rgb(0x00,0xAB,0xAB),
-    rgb(0xAB,0xAB,0x00),
-    rgb(0xAB,0xAB,0xAB),
-
-    rgb(84/3,77/3,84/3), // made it x3 darker
-    // rgb(0x06,0x08,0x00), // bright: black,blue,red,pink,green,cyan,yellow,white
-    rgb(0x00,0x00,0xFF),
-    rgb(0xFF,0x00,0x00),
-    rgb(0xFF,0x00,0xFF),
-    rgb(0x00,0xFF,0x00),
-    rgb(0x00,0xFF,0xFF),
-    rgb(0xFF,0xFF,0x00), // rgb(0xEE,0xEB,0x46), brighter yellow because jacknipper2 looks washed
-    rgb(0xFF,0xFF,0xFF)
-#elif 0 // latest
-    rgb(0x00,0x00,0x00), // normal: black,blue,red,pink,green,cyan,yellow,white
-    rgb(0x00,0x00,0xC0), // note: D7 seems fine too
-    rgb(0xC0,0x00,0x00),
-    rgb(0xC0,0x00,0xC0),
-    rgb(0x00,0xC0,0x00),
-    rgb(0x00,0xC0,0xC0),
-    rgb(0xC0,0xC0,0x00),
-    rgb(0xC0,0xC0,0xC0),
-
-    rgb(0x06,0x08,0x00), // bright: black,blue,red,pink,green,cyan,yellow,white
-    rgb(0x16,0x1C,0xB0), // Richard Atkinson's bright colors
-    rgb(0xCE,0x18,0x18),
-    rgb(0xDC,0x2C,0xC8),
-    rgb(0x28,0xDC,0x2D),
-    rgb(0x36,0xEF,0xDE),
-    rgb(0xEE,0xEB,0x00), // rgb(0xEE,0xEB,0x46), brighter yellow because jacknipper2 looks washed
-    rgb(0xFD,0xFF,0xF7)
-#elif 0 // mrmo's goblin22 adapted. just for fun
-    rgb(84/3,77/3,84/3), // made it x3 darker
-    rgb(37,47,64),
-    rgb(99,37,14),
-    rgb(99,42,123),
-    rgb(78,131,87),
-    rgb(71,143,202),
-    rgb(216,121+121/2,69), // original: 216,121,69
-    rgb(160,154,146),
-
-    rgb(84/3,77/3,84/3), // made it x3 darker
-    rgb(47,88,141),
-    rgb(158,50,39),
-    rgb(194,71,184),
-    rgb(137,170,85),
-    rgb(100,213,223),
-    rgb(244,220,109),
-    rgb(245,238,228)
-#endif
-};
-
 enum SpecKeys {
     ZX_0,ZX_1,ZX_2,ZX_3,ZX_4,ZX_5,  ZX_6,ZX_7,ZX_8,ZX_9,ZX_A,ZX_B,  ZX_C,ZX_D,ZX_E,ZX_F,ZX_G,ZX_H,
     ZX_I,ZX_J,ZX_K,ZX_L,ZX_M,ZX_N,  ZX_O,ZX_P,ZX_Q,ZX_R,ZX_S,ZX_T,  ZX_U,ZX_V,ZX_W,ZX_X,ZX_Y,ZX_Z,
     ZX_SPACE,ZX_ENTER,ZX_SHIFT,ZX_SYMB,ZX_CTRL
 };
 #define ZXKey(a) ( keymap[ keytbl[a][0] ][ keytbl[a][1] ] &= keytbl[a][2] )
-#define ZXKeyUpdate() \
+#define ZXKeyboardClear() \
     keymap[1][1] = keymap[1][2] = \
     keymap[2][1] = keymap[2][2] = \
     keymap[3][1] = keymap[3][2] = \
@@ -617,6 +669,8 @@ const unsigned char keytbl[256][3] = {
 void port_0x00fe(byte value) {
     // border color
     ZXBorderColor = (value & 0x07);
+
+    border[border_num++] = (ZXBorderColor << 24) | (ticks - border_org);
 
     // speaker
     spk = value;
@@ -1043,12 +1097,13 @@ uint64_t tick1(int num_ticks, uint64_t pins, void* user_data) {
 }
 
 
-void sim_frame() {
+void frame_new() {
     // logic that ticks every new frame
     // this section has x50 faster rate than next section.
     if( 1 ) {
         // vsync (once per frame)
         zx_int = 1;
+        //border_num = 0;
     }
     if( tape_inserted() ) {
         // auto-plays tape
@@ -1090,7 +1145,7 @@ void sim_frame() {
     }
 }
 
-void sim(unsigned TS) {
+void run(unsigned TS) {
     // if(TS<0)return;
 
 #if NEWCORE
@@ -1189,52 +1244,6 @@ void sys_audio() {
     }
 }
 
-byte ulaplus_mode = 0; // 0:pal,1:mode,else:undefined
-byte ulaplus_data = 0;
-byte ulaplus_enabled = 0;
-byte ulaplus_grayscale = 0;
-byte ulaplus_registers[64+1] = {0};
-
-void ula_reset() {
-    ulaplus_mode = 0;
-    ulaplus_data = 0;
-    ulaplus_enabled = 0;
-    ulaplus_grayscale = 0;
-    memset(ulaplus_registers, 0, sizeof(ulaplus_registers));
-    memcpy(ZXPalette, ZXPaletteDef, sizeof(ZXPalette[0]) * 64);
-
-#if 0
-    // contended lookups
-    memset(contended, 0, sizeof(contended));
-    for( int i = 63, c = 6; i <= (63+192); ++i, --c ) {
-        contended[i*228]=c<0?0:c; // initial: 64*224 (48K)
-        if(c<0) c=6;
-    }
-#endif
-
-    // colorize. this is especially needed on Richard Atkinson's palette (imho)
-    // also, for the RF effect, colors are saturated right here instead of during bitmap blits
-    for( int i = 0; i < 16; ++i) {
-        unsigned r,g,b; byte h,s,v;
-        rgb_split(ZXPalette[i],r,g,b);
-        rgb2hsv(r,g,b,&h,&s,&v);
-
-                    //unsigned luma = (unsigned)((r * 0.299 + g * 0.587 + 0.114));
-                    //luma *= 1.25; if( luma > 255 ) luma = 255;
-                    //ZXPalette[i] = rgb(luma,luma,luma);
-
-        // saturated; (h)ue bw-to-(s)aturation (b)rightness
-                 // s = s*1.125 < 255 ? s*1.125 : 255; // extra saturated
-                    v = v*1.125 < 255 ? v*1.125 : 255; // extra brightness
-                    ZXPalette[i] = as_rgb(h,s,v);
-                    continue;
-
-        // bw
-                    s = 0;
-                    v = v*0.98;
-                    ZXPalette[i] = as_rgb(h,s,v);
-    }
-}
 
 void logport(word port, byte value, int is_out) {
     return;
@@ -2186,6 +2195,10 @@ void reset(unsigned FLAGS) {
     } else {
         Reset1793(&wd,fdd,WD1793_KEEP);
     }
+
+    border_num = 0;
+    border_org = ticks;
+    border[border_num] = 0;
 }
 
 void boot(int model, unsigned FLAGS) {

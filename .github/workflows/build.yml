@@ -24,7 +24,7 @@ jobs:
     - name: Configure CMake
       run: >-
         cmake
-        -S "${{github.workspace}}"
+        -S "${{github.workspace}}/.github"
         -B "${{github.workspace}}/build"
         -DCMAKE_BUILD_TYPE=${{env.CMAKE_BUILD_TYPE}}
         -DCMAKE_GENERATOR_PLATFORM=${{env.CMAKE_GENERATOR_PLATFORM}}

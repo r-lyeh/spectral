@@ -21,7 +21,9 @@ typedef unsigned int   rgba;
 #define bswap16 __builtin_bswap16
 #endif
 
-#ifndef _WIN32
+#ifdef _WIN32
+#define mkdir(p,m)    mkdir(p)
+#else
 #include <limits.h>
 #define MAX_PATH PATH_MAX // (defined in limits.h)
 
@@ -45,4 +47,12 @@ typedef int RECT;
         __argv = argv;
     }
 #endif
+#endif
+
+#ifndef __GNUC__
+#include <immintrin.h>
+#define __builtin_clz(x)   _lzcnt_u32(x)
+#define __builtin_clzll(x) _lzcnt_u64(x)
+#define __builtin_ctz(x)   _tzcnt_u32(x)
+#define __builtin_ctzll(x) _tzcnt_u64(x)
 #endif

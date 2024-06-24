@@ -19,6 +19,7 @@
 #include "../../3rd.h"
 #include "../../sys_string.h"
 #include "sys_db.h"
+#include "../../sys_network.h"
 #include "../../sys_sleep.h"
 
 #include "zx_db.h"
@@ -50,7 +51,10 @@ int main(int argc, char **argv) {
             fprintf(stderr, "%dm%ds\n", (int)(t / 1e9)/60, (int)(t / 1e9)%60);
         }
         else if( argv[1][0] == '/' ) {
-            zxdb_download(fopen(strrchr(argv[1],'/')+1, "a+b"), argv[1]);
+            for( FILE *out = fopen(strrchr(argv[1],'/')+1, "a+b"); out; fclose(out), out = 0) {
+                int len; char *data = zxdb_download(argv[1], &len);
+                fwrite(data, len, 1, out);
+            }
         }
         else { // #number, "*text*search*", or "/file.ext"
             zxdb_free(zxdb_print(zxdb_search(argv[1])));
@@ -71,3 +75,5 @@ int main(int argc, char **argv) {
 // Benny Bunny|24323                    # type-in v1
 // Danger Dynamite|36221                # magref
 // Perigo!|39393                        # type-in v2
+
+// select *,(select score from scores where entry_id = E.id) as score from entries E order by score desc limit 10;
